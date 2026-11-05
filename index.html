@@ -874,7 +874,8 @@ input[readonly] { background: var(--surface2); color: var(--text3); cursor: defa
                 <div class="field"><label class="lbl">Discharge Rate (mt/d)</label><input id="t-dis-rate" type="number" value="30000"></div>
                 <div class="field"><label class="lbl">Turn Time Load (days)</label><input id="t-turn-load" type="number" step="0.1" value="0.5"></div>
                 <div class="field"><label class="lbl">Turn Time Dis (days)</label><input id="t-turn-dis" type="number" step="0.1" value="1.0"></div>
-                <div class="field"><label class="lbl">Load Draft (m)</label><input id="t-load-draft" type="number" step="0.1" value="18"></div>
+                <div class="field"><label class="lbl">Load Port / Terminal</label><input id="t-load-port" type="text" value="Port Hedland (BHP)"></div>
+                <div class="field"><label class="lbl">Load Port Draft (m) <span style="font-size:9px;color:var(--text3);cursor:pointer" title="Reset to BHP default" onclick="g('t-load-draft').value=18">BHP 18.0 ↺</span></label><input id="t-load-draft" type="number" step="0.05" value="18"></div>
                 <div class="field"><label class="lbl">Commission</label><input id="t-comm" type="number" step="0.001" value="0.0375"></div>
                 <div class="field"><label class="lbl">Weather Factor</label><input id="t-weather" type="number" step="0.01" value="0.05"></div>
                 <div class="field"><label class="lbl">Misc Exp (USD)</label><input id="t-misc" type="number" value="10000"></div>
@@ -1698,6 +1699,7 @@ function validateInputs(){
   if(!t.loadRate||t.loadRate<=0) errors.push('Load rate must be positive (cannot be 0 — causes divide-by-zero in port days calculation)');
   if(!t.disRate||t.disRate<=0)   errors.push('Discharge rate must be positive (cannot be 0 — causes divide-by-zero)');
   if(t.loadDraft<=0)   errors.push('Load draft must be positive');
+  if(v.draft>0&&t.loadDraft>v.draft) warns.push(`Load port draft ${t.loadDraft}m is deeper than the vessel's SSW draft ${v.draft}m — lift capped at DWT less constants`);
   if(t.comm<0||t.comm>0.1) errors.push('Commission should be between 0 and 10% (entered as decimal e.g. 0.0375)');
   if(t.weather<0||t.weather>0.3) errors.push('Weather factor should be between 0 and 30%');
   // Speeds — divide by zero if 0
@@ -3293,6 +3295,7 @@ function initRouteCompare(force){
     h+=`<tr><td>${l}</td>${['C5','C3'].map(r=>`<td><input class="cell-input" id="rc-${r}-${k}" type="number" step="${st}" value="${val(r)}" oninput="renderRouteCompare()"></td>`).join('')}</tr>`;
   });
   g('rc-assump').innerHTML=h+'</tbody>';
+  if(activeRoute==='C5'&&+g('t-load-draft').value) g('rc-C5-loadDraft').value=+g('t-load-draft').value;
   renderRouteCompare();
 }
 function rcRoute(r){
@@ -3359,7 +3362,7 @@ function saveToRegistry(){
     waFfa:Math.round(r.waFfa),durMo:r.durMo,
     delivery:r.del.toLocaleDateString(),redelivery:r.rdel.toLocaleDateString(),
     refTce:Math.round(r.ref.tce),mode:r.ref.mode,dlyPrem:Math.round(r.dlyPrem),spread:Math.round(r.spread),
-    model:MODEL_VERSION, route:activeRoute, inputs:{vessel:{...r.v}, trade:{...r.t}, vlsfo:r.vlsfo, hsfo:r.hsfo, ageAdj:r.ageAdj}});
+    model:MODEL_VERSION, route:activeRoute, loadPort:g('t-load-port')?.value||'', loadDraft:r.t.loadDraft, inputs:{vessel:{...r.v}, trade:{...r.t}, vlsfo:r.vlsfo, hsfo:r.hsfo, ageAdj:r.ageAdj}});
   localStorage.setItem('bhpReg3',JSON.stringify(registry));
   renderRegistry(); toast(`${r.v.name} saved`);
 }
@@ -3554,8 +3557,8 @@ function deleteReg(i){if(!confirm('Remove?'))return;registry.splice(i,1);localSt
 function clearRegistry(){if(!confirm('Clear all?'))return;registry=[];localStorage.setItem('bhpReg3',JSON.stringify(registry));renderRegistry();toast('Registry cleared');}
 function exportRegistry(){
   if(!registry.length){toast('Nothing to export','err');return;}
-  const h=['Name','DWT','Built','Yard','Flag','Scrubber','Coeff_180','Coeff_182','ScrubAdj_180','FV_180','FV_182','WA_FFA','Duration_Months','Delivery','Redelivery','TCE_Mid','Mode','Date'];
-  const rows=registry.map(v=>[v.name,v.dwt,v.built,v.yard,v.flag,v.scrubber?'Yes':'No',(v.c180*100).toFixed(4),(v.c182*100).toFixed(4),(v.sAdj180*100).toFixed(4),v.fv180,v.fv182,v.waFfa,v.durMo,v.delivery,v.redelivery,v.refTce,v.mode,new Date(v.date).toLocaleDateString()].join(','));
+  const h=['Name','DWT','Built','Yard','Flag','Scrubber','Coeff_180','Coeff_182','ScrubAdj_180','FV_180','FV_182','WA_FFA','Duration_Months','Delivery','Redelivery','TCE_Mid','Mode','Load_Port','Load_Draft_m','Model','Date'];
+  const rows=registry.map(v=>[v.name,v.dwt,v.built,v.yard,v.flag,v.scrubber?'Yes':'No',(v.c180*100).toFixed(4),(v.c182*100).toFixed(4),(v.sAdj180*100).toFixed(4),v.fv180,v.fv182,v.waFfa,v.durMo,v.delivery,v.redelivery,v.refTce,v.mode,`"${(v.loadPort||'').replace(/"/g,'')}"`,v.loadDraft??'',v.model||'v1',new Date(v.date).toLocaleDateString()].join(','));
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([[h.join(','),...rows].join('\n')],{type:'text/csv'}));
   a.download=`vessel_registry_${new Date().toISOString().slice(0,10)}.csv`;a.click();toast('Exported');
 }
