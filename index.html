@@ -725,6 +725,9 @@ input[readonly] { background: var(--surface2); color: var(--text3); cursor: defa
     <div class="nav-item" onclick="switchTab('scrubber')" id="nav-scrubber">
       <div class="nav-step" id="step-scrubber">3</div> Scrubber
     </div>
+    <div class="nav-item" onclick="switchTab('routes')" id="nav-routes">
+      <span class="nav-icon">⇄</span> C5 vs C3
+    </div>
     <div class="nav-divider"></div>
     <div class="sidebar-section">Fleet</div>
     <div class="nav-item" onclick="switchTab('registry')" id="nav-registry">
@@ -998,6 +1001,31 @@ input[readonly] { background: var(--surface2); color: var(--text3); cursor: defa
     </div>
 
     <!-- ══ REGISTRY ═════════════════════════════════════════ -->
+    <div class="tab-pane" id="tab-routes">
+      <div class="page-header">
+        <div><h2>Route Compare — C5 vs C3</h2><span class="sub">Same vessel, one round voyage on each route · owner's earnings and coefficient vs BCI 180</span></div>
+        <div style="display:flex;gap:8px"><button class="btn btn-ghost" onclick="initRouteCompare(true)">↺ Reset to defaults</button></div>
+      </div>
+      <div style="padding:16px 22px 0">
+        <div class="card mb16">
+          <div class="card-header"><span class="card-title"><span class="dot"></span>Market &amp; Route Assumptions</span><span id="rc-vessel" style="font-size:11px;color:var(--text3);font-family:var(--mono)"></span></div>
+          <div class="card-body">
+            <div class="g3 gap-sm mb12">
+              <div class="field"><label class="lbl">VLSFO $/mt</label><input id="rc-vlsfo" type="number" oninput="renderRouteCompare()"></div>
+              <div class="field"><label class="lbl">LSGO $/mt</label><input id="rc-lsgo" type="number" oninput="renderRouteCompare()"></div>
+              <div class="field"><label class="lbl">Commission</label><input id="rc-comm" type="number" step="0.001" oninput="renderRouteCompare()"></div>
+            </div>
+            <div class="overflow"><table class="data-table" id="rc-assump"></table></div>
+            <p class="text-sm mt8">Sea margin is applied to both the ballast and laden legs. C3 defaults to 7% (longer ocean passage, South Atlantic / Cape weather) vs 5% on C5. Vessel speeds and consumptions come from the Inputs tab; port consumption is unchanged.</p>
+          </div>
+        </div>
+        <div id="rc-kpis" class="g4 mb16"></div>
+        <div class="card mb16">
+          <div class="card-header"><span class="card-title"><span class="dot"></span>Voyage Economics</span></div>
+          <div class="card-body" style="padding:0"><div class="overflow"><table class="data-table" id="rc-table"></table></div></div>
+        </div>
+      </div>
+    </div>
     <div class="tab-pane" id="tab-registry">
       <div class="page-header">
         <div><h2>Vessel Registry</h2><span class="sub" id="reg-sub">0 vessels</span></div>
@@ -1072,12 +1100,12 @@ input[readonly] { background: var(--surface2); color: var(--text3); cursor: defa
               <div class="cmp-row"><span class="lbl">Max Age</span><span class="val">10 years</span></div>
               <div class="cmp-row"><span class="lbl">Scrubber</span><span class="val">Non-fitted</span></div>
             </div>
-            <table class="spec-table"><thead><tr><th>Mode</th><th>Dir</th><th>Speed</th><th>MFO (mt/d)</th></tr></thead>
+            <table class="spec-table"><thead><tr><th>Mode</th><th>Dir</th><th>Speed</th><th>VLSFO (mt/d)</th></tr></thead>
             <tbody>
               <tr><td class="mode-w">Warranted</td><td>Ballast</td><td>14</td><td>44</td></tr>
               <tr><td></td><td>Laden</td><td>14</td><td>44</td></tr>
               <tr><td class="mode-e">Eco</td><td>Ballast</td><td>13</td><td>36</td></tr>
-              <tr><td></td><td>Laden</td><td>12</td><td>29</td></tr>
+              <tr><td></td><td>Laden</td><td>12</td><td>36</td></tr>
               <tr><td>Port Work/Idle</td><td></td><td>—</td><td>5 / 5</td></tr>
             </tbody></table>
             <p class="text-sm mt8">Source: Baltic Exchange BCI182 vessel description</p>
@@ -1090,7 +1118,7 @@ input[readonly] { background: var(--surface2); color: var(--text3); cursor: defa
           <div class="g3 gap-sm">
             <div>
               <div class="divider">TCE Calculation</div>
-              <p class="text-sm">1. Compute loadable quantity from DWT, TPC, draft, constants<br>2. Calculate voyage days (laden + ballast + port times)<br>3. Gross revenue = freight $/t × lift (mt)<br>4. Deduct: port DAs, commissions, bunker cost, misc<br>5. TCE = net revenue ÷ voyage days<br>6. Report MAX(warranted TCE, eco TCE)</p>
+              <p class="text-sm">1. Lift = DWT − (SSW draft − load draft) × TPC × 100 − constants<br>2. Calculate voyage days (laden + ballast + port times)<br>3. Gross revenue = freight $/t × lift (mt)<br>4. Deduct: port DAs, commissions, bunker cost, misc<br>5. TCE = net revenue ÷ voyage days<br>6. Report MAX(warranted TCE, eco TCE)</p>
             </div>
             <div>
               <div class="divider">Model Coefficient</div>
@@ -1260,10 +1288,13 @@ input[readonly] { background: var(--surface2); color: var(--text3); cursor: defa
   </main>
 </div>
 
-<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
+<script>
 // ═══════════════════════════════════════════════════════════
 // STATE
 // ═══════════════════════════════════════════════════════════
+// Bump whenever benchmark specs or the TCE engine change, so saved runs can be traced to the model that produced them.
+// v2 (Nov 2026): BCI 182 eco laden 29 → 36 mt/d; lift now draft-limited at the load draft.
+const MODEL_VERSION = 'v2';
 let registry = JSON.parse(localStorage.getItem('bhpReg3') || '[]');
 let lastResult = null;
 let ffaMonths = [];
@@ -1290,7 +1321,7 @@ const BCI180 = {
 const BCI182 = {
   name:'BCI 182', dwt:182000, draft:18.2, tpc:123, constants:800,
   spd_w_b:14, spd_w_l:14, spd_e_b:13, spd_e_l:12,
-  con_w_b:44, con_w_l:44, con_e_b:36, con_e_l:29,
+  con_w_b:44, con_w_l:44, con_e_b:36, con_e_l:36,
   con_pw:5, con_pi:5, lgo_w_b:0, lgo_w_l:0, lgo_e_b:0, lgo_e_l:0, lgo_pw:0
 };
 const FFA_DEF = [28250,29000,28600,27500,27500,27500,27350,27350,27350,19750,19750,19750,24000,26000,26000,26000,26000,26000,26000,26000,26000,26000,19000,19000,20600];
@@ -1335,8 +1366,9 @@ setInterval(()=>{ document.getElementById('clock').textContent = new Date().toUT
 // ═══════════════════════════════════════════════════════════
 // NAV
 // ═══════════════════════════════════════════════════════════
-const TABS = ['inputs','results','scrubber','registry','benchmark','apiguide','history','safety'];
+const TABS = ['inputs','results','scrubber','routes','registry','benchmark','apiguide','history','safety'];
 function switchTab(id){
+  if(id==='routes') initRouteCompare();
   TABS.forEach(t=>{
     document.getElementById('tab-'+t)?.classList.toggle('active',t===id);
     document.getElementById('nav-'+t)?.classList.toggle('active',t===id);
@@ -1538,7 +1570,12 @@ initFfaGrid();
 // ═══════════════════════════════════════════════════════════
 // TCE ENGINE
 // ═══════════════════════════════════════════════════════════
-function lift(v,t){ return Math.min(v.dwt-v.constants, (t.loadDraft - v.constants/v.tpc/100)*v.tpc*100); }
+// Lift = summer DWT less the deadweight given up by loading below the SSW draft, less constants.
+// e.g. 182k / 18.2m SSW / TPC 123 loading to 18.0m → 182,000 − 0.2×12,300 − 800 = 178,740 mt
+function lift(v,t){
+  const draftLoss=Math.max(0,(v.draft||t.loadDraft)-t.loadDraft)*v.tpc*100;
+  return v.dwt-draftLoss-v.constants;
+}
 
 function voyDays(v,t,mode){
   const sb=mode==='eco'?v.spd_e_b:v.spd_w_b, sl=mode==='eco'?v.spd_e_l:v.spd_w_l;
@@ -3224,6 +3261,91 @@ function _sendEmail(){
   toast('Email opened in your mail app');
 }
 
+
+// ═══════════════════════════════════════════════════════════
+// ROUTE COMPARE — C5 vs C3
+// ═══════════════════════════════════════════════════════════
+const RC_FIELDS=[
+  ['freight','Freight ($/t)',0.05],['weather','Sea margin',0.01],['dist','Distance (nm)',1],
+  ['loadDraft','Load draft (m)',0.1],['loadRate','Load rate (mt/d)',1000],['disRate','Disch rate (mt/d)',1000],
+  ['turnLoad','Turn time load (d)',0.1],['turnDis','Turn time disch (d)',0.1],
+  ['loadDA','Load port DA ($)',1000],['disDA','Disch port DA ($)',1000],['misc','Misc ($)',1000]
+];
+let rcInit=false;
+function readVesselInputs(){
+  const n=id=>+g(id).value;
+  return { name:g('v-name').value, built:n('v-built'), dwt:n('v-dwt'), draft:n('v-draft'),
+    tpc:n('v-tpc'), constants:n('v-constants'),
+    spd_w_b:n('spd-w-b'), spd_w_l:n('spd-w-l'), spd_e_b:n('spd-e-b'), spd_e_l:n('spd-e-l'),
+    con_w_b:n('con-w-b'), con_w_l:n('con-w-l'), con_e_b:n('con-e-b'), con_e_l:n('con-e-l'),
+    con_pw:n('con-pw'), con_pi:n('con-pi'),
+    lgo_w_b:n('lgo-w-b'), lgo_w_l:n('lgo-w-l'), lgo_e_b:n('lgo-e-b'), lgo_e_l:n('lgo-e-l'), lgo_pw:n('lgo-pw') };
+}
+function initRouteCompare(force){
+  if(rcInit&&!force){ renderRouteCompare(); return; }
+  rcInit=true;
+  g('rc-vlsfo').value=+g('b-vlsfo').value||550;
+  g('rc-lsgo').value=+g('b-lsgo')?.value||900;
+  g('rc-comm').value=ROUTES.C5.comm;
+  let h='<thead><tr><th>Assumption</th><th>C5 · Port Hedland → Qingdao</th><th>C3 · Tubarão → Qingdao</th></tr></thead><tbody>';
+  RC_FIELDS.forEach(([k,l,st])=>{
+    const val=r=>k==='freight'?ROUTES[r].freightMid:ROUTES[r][k];
+    h+=`<tr><td>${l}</td>${['C5','C3'].map(r=>`<td><input class="cell-input" id="rc-${r}-${k}" type="number" step="${st}" value="${val(r)}" oninput="renderRouteCompare()"></td>`).join('')}</tr>`;
+  });
+  g('rc-assump').innerHTML=h+'</tbody>';
+  renderRouteCompare();
+}
+function rcRoute(r){
+  const o={}; RC_FIELDS.forEach(([k])=>o[k]=+g(`rc-${r}-${k}`).value);
+  o.comm=+g('rc-comm').value; return o;
+}
+// Freight on route B that gives the same vessel TCE as route A (bisection; mode may switch)
+function rcBreakeven(v,t,target,bp,lgp){
+  let lo=0,hi=200;
+  for(let i=0;i<60;i++){ const m=(lo+hi)/2; (bestTce(v,t,m,bp,t.loadDA,t.disDA,lgp).tce<target)?lo=m:hi=m; }
+  return (lo+hi)/2;
+}
+function renderRouteCompare(){
+  if(!rcInit) return;
+  const v=readVesselInputs(), bp=+g('rc-vlsfo').value, lgp=+g('rc-lsgo').value||900;
+  g('rc-vessel').textContent=`${v.name||'Vessel'} · ${fmt(v.dwt)} DWT`;
+  const res={};
+  ['C5','C3'].forEach(r=>{
+    const t=rcRoute(r);
+    const ves=bestTce(v,t,t.freight,bp,t.loadDA,t.disDA,lgp);
+    const ben=bestTce({...BCI180},t,t.freight,bp,t.loadDA,t.disDA,900);
+    res[r]={t,ves,ben,coeff:ben.tce>0?ves.tce/ben.tce:null};
+  });
+  const c5=res.C5, c3=res.C3, gap=c3.ves.tce-c5.ves.tce;
+  const be=rcBreakeven(v,c3.t,c5.ves.tce,bp,lgp);
+  const kpi=(lbl,val,sub,cls='')=>`<div class="kpi ${cls}"><div class="kpi-label">${lbl}</div><div class="kpi-value">${val}</div><div class="kpi-sub">${sub}</div></div>`;
+  g('rc-kpis').innerHTML=
+    kpi('Owner TCE · C5',`$${fmt(c5.ves.tce)}`,`${c5.ves.mode} · ${c5.ves.days.tot.toFixed(1)} days`)+
+    kpi('Owner TCE · C3',`$${fmt(c3.ves.tce)}`,`${c3.ves.mode} · ${c3.ves.days.tot.toFixed(1)} days`)+
+    kpi('C3 minus C5',`${gap>=0?'+':'−'}$${fmt(Math.abs(gap))}`,`per day · ${gap>=0?'C3 pays more':'C5 pays more'}`,gap>=0?'blue':'red')+
+    kpi('C3 freight to match C5',`$${be.toFixed(2)}/t`,`vs $${c3.t.freight.toFixed(2)}/t assumed`);
+  const row=(l,f,bold)=>`<tr${bold?' style="font-weight:600"':''}><td>${l}</td>${[c5.ves,c5.ben,c3.ves,c3.ben].map(f).join('')}</tr>`;
+  const td=x=>`<td>${x}</td>`, neg=x=>`<td>(${fmt(x)})</td>`;
+  const comm=x=>x.grossRev*(x===c5.ves||x===c5.ben?c5.t.comm:c3.t.comm);
+  const da=x=>(x===c5.ves||x===c5.ben)?c5.t.loadDA+c5.t.disDA:c3.t.loadDA+c3.t.disDA;
+  const misc=x=>(x===c5.ves||x===c5.ben)?c5.t.misc:c3.t.misc;
+  g('rc-table').innerHTML=`<thead><tr><th></th><th>C5 · ${v.name||'Vessel'}</th><th>C5 · BCI 180</th><th>C3 · ${v.name||'Vessel'}</th><th>C3 · BCI 180</th></tr></thead><tbody>
+    ${row('Speed mode',x=>td(`<span class="tag ${x.mode==='eco'?'tag-eco':'tag-war'}">${x.mode}</span>`))}
+    ${row('Cargo lifted (mt)',x=>td(fmt(x.lift)))}
+    ${row('Ballast days',x=>td(x.days.sb.toFixed(2)))}
+    ${row('Laden days',x=>td(x.days.sl.toFixed(2)))}
+    ${row('Port days',x=>td((x.days.ld+x.days.dd).toFixed(2)))}
+    ${row('Total voyage days',x=>td(x.days.tot.toFixed(2)),1)}
+    ${row('Gross freight ($)',x=>td(fmt(x.grossRev)))}
+    ${row('Commission ($)',x=>neg(comm(x)))}
+    ${row('Port DAs ($)',x=>neg(da(x)))}
+    ${row('Bunkers ($)',x=>neg(x.bunkCost))}
+    ${row('Misc ($)',x=>neg(misc(x)))}
+    ${row('Net voyage result ($)',x=>td(fmt(x.netRev)),1)}
+    ${row('TCE ($/day)',x=>td(`$${fmt(x.tce)}`),1)}
+    <tr style="font-weight:600"><td>Coefficient vs BCI 180</td><td>${fmtPct(c5.coeff)}</td><td>100.00%</td><td>${fmtPct(c3.coeff)}</td><td>100.00%</td></tr>
+    </tbody>`;
+}
 // ═══════════════════════════════════════════════════════════
 // REGISTRY
 // ═══════════════════════════════════════════════════════════
@@ -3236,7 +3358,8 @@ function saveToRegistry(){
     fv180:Math.round(r.fv180),fv182:Math.round(r.fv182),
     waFfa:Math.round(r.waFfa),durMo:r.durMo,
     delivery:r.del.toLocaleDateString(),redelivery:r.rdel.toLocaleDateString(),
-    refTce:Math.round(r.ref.tce),mode:r.ref.mode,dlyPrem:Math.round(r.dlyPrem),spread:Math.round(r.spread)});
+    refTce:Math.round(r.ref.tce),mode:r.ref.mode,dlyPrem:Math.round(r.dlyPrem),spread:Math.round(r.spread),
+    model:MODEL_VERSION, route:activeRoute, inputs:{vessel:{...r.v}, trade:{...r.t}, vlsfo:r.vlsfo, hsfo:r.hsfo, ageAdj:r.ageAdj}});
   localStorage.setItem('bhpReg3',JSON.stringify(registry));
   renderRegistry(); toast(`${r.v.name} saved`);
 }
